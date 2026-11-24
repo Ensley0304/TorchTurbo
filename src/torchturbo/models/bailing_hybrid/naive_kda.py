@@ -242,8 +242,9 @@ def naive_recurrent_kda(
     for i in range(0, T):
         q_i, k_i, v_i, g_i, b_i = q[:, i], k[:, i], v[:, i], g[:, i], beta[:, i]
         S = S * g_i[..., None].exp()
-        S = S + torch.einsum('b h k, b h v -> b h k v', b_i[..., None] * k_i, v_i - (k_i[..., None] * S).sum(-2))
-        o[:, i] = torch.einsum('b h k, b h k v -> b h v', q_i, S)
+        residual = v_i - (k_i[..., None] * S).sum(-2)
+        S = S + (b_i[..., None] * k_i)[..., None] * residual.unsqueeze(-2)
+        o[:, i] = (q_i[..., None] * S).sum(-2)
     if not output_final_state:
         S = None
 
@@ -389,6 +390,9 @@ def naive_recurrent_kda_wrapper(
     scale: float | None = None,
 ):
 
+    q, k, v, g, beta = (x.float() for x in (q, k, v, g, beta))
+    A_log = A_log.float() if A_log is not None else None
+    dt_bias = dt_bias.float() if dt_bias is not None else None
     if use_qk_l2norm_in_kernel:
         q = _normalize_kda_input(q)
         k = _normalize_kda_input(k)
@@ -443,10 +447,12 @@ def naive_chunk_kda_wrapper(
     chunk_size: int = 64,
 ):
 
+    q, k, v, g, beta = (x.float() for x in (q, k, v, g, beta))
+    A_log = A_log.float() if A_log is not None else None
+    dt_bias = dt_bias.float() if dt_bias is not None else None
     if use_qk_l2norm_in_kernel:
-        # AscendC chunk prepare stores normalized vectors in the input dtype.
-        q = _normalize_kda_input(q).to(q.dtype)
-        k = _normalize_kda_input(k).to(k.dtype)
+        q = _normalize_kda_input(q)
+        k = _normalize_kda_input(k)
     if use_gate_in_kernel or safe_gate:
         g = naive_kda_lowerbound_gate(g, A_log, dt_bias, lower_bound=lower_bound)
 
