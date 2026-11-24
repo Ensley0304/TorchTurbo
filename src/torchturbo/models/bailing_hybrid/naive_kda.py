@@ -367,6 +367,11 @@ def naive_kda_lowerbound_gate(
     return g.to(output_dtype)
 
 
+def _normalize_kda_input(x: torch.Tensor) -> torch.Tensor:
+    values = x.float()
+    return values * torch.rsqrt(values.square().sum(dim=-1, keepdim=True) + 1e-6)
+
+
 def naive_recurrent_kda_wrapper(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -384,8 +389,9 @@ def naive_recurrent_kda_wrapper(
     scale: float | None = None,
 ):
 
-    q = F.normalize(q, p=2, dim=-1)
-    k = F.normalize(k, p=2, dim=-1)
+    if use_qk_l2norm_in_kernel:
+        q = _normalize_kda_input(q)
+        k = _normalize_kda_input(k)
     if use_gate_in_kernel:
         g = naive_kda_lowerbound_gate(g, A_log, dt_bias, lower_bound=lower_bound)
 
@@ -399,7 +405,7 @@ def naive_recurrent_kda_wrapper(
             o_i, ht_i = naive_recurrent_kda(
                 q=q[:, s:e], k=k[:, s:e], v=v[:, s:e],
                 g=g[:, s:e], beta=beta[:, s:e],
-                initial_state=h0_i, output_final_state=True,
+                scale=scale, initial_state=h0_i, output_final_state=True,
             )
             o_list.append(o_i)
             ht_list.append(ht_i.squeeze(0))
@@ -412,7 +418,7 @@ def naive_recurrent_kda_wrapper(
     else:
         o, initial_state = naive_recurrent_kda(
             q=q, k=k, v=v, g=g, beta=beta,
-            initial_state=initial_state, output_final_state=True,
+            scale=scale, initial_state=initial_state, output_final_state=True,
         )
 
     return o, initial_state
@@ -437,8 +443,10 @@ def naive_chunk_kda_wrapper(
     chunk_size: int = 64,
 ):
 
-    q = F.normalize(q, p=2, dim=-1)
-    k = F.normalize(k, p=2, dim=-1)
+    if use_qk_l2norm_in_kernel:
+        # AscendC chunk prepare stores normalized vectors in the input dtype.
+        q = _normalize_kda_input(q).to(q.dtype)
+        k = _normalize_kda_input(k).to(k.dtype)
     if use_gate_in_kernel or safe_gate:
         g = naive_kda_lowerbound_gate(g, A_log, dt_bias, lower_bound=lower_bound)
 
@@ -453,7 +461,7 @@ def naive_chunk_kda_wrapper(
             o_i, ht_i = naive_recurrent_kda(
                 q=q_i, k=k_i, v=v_i,
                 g=g_i, beta=b_i,
-                initial_state=h0_i, output_final_state=True,
+                scale=scale, initial_state=h0_i, output_final_state=True,
             )
             o_list.append(o_i)
             ht_list.append(ht_i.squeeze(0))
@@ -466,7 +474,7 @@ def naive_chunk_kda_wrapper(
     else:
         o, initial_state = naive_recurrent_kda(
             q=q, k=k, v=v, g=g, beta=beta,
-            initial_state=initial_state, output_final_state=True,
+            scale=scale, initial_state=initial_state, output_final_state=True,
         )
 
     return o, initial_state
